@@ -593,7 +593,10 @@
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/umd/ffmpeg.min.js"></script>
+    <!-- ffmpeg.min.js é carregado dinamicamente via blob (ver ensureFfmpegLoaded) para evitar
+         o erro "Failed to construct 'Worker': cannot be accessed from origin" causado pelo
+         worker interno (814.ffmpeg.js) tentando resolver caminho relativo ao CDN. -->
+    <script></script>
     <script>
 // ======= LÓGICA DE TABS =======
 const allTabs = document.querySelectorAll('.d-tab');
@@ -1519,13 +1522,30 @@ async function toBlobURL(url, mimeType) {
     return URL.createObjectURL(blob);
 }
 
+// Carrega um <script> dinamicamente a partir de uma blob URL (mesmo truque usado para coreURL/wasmURL),
+// assim o worker interno do ffmpeg.min.js (814.ffmpeg.js) resolve relativo ao blob, não ao CDN externo,
+// evitando o erro "Failed to construct 'Worker': cannot be accessed from origin ...".
+function loadScriptFromBlobURL(blobUrl) {
+    return new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = blobUrl;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('Falha ao executar o script do FFmpeg carregado via blob.'));
+        document.head.appendChild(s);
+    });
+}
+
 async function ensureFfmpegLoaded(onLog) {
     if (ffmpegLoaded) return ffmpeg;
     if (location.protocol === 'file:') {
         throw new Error('Este arquivo precisa ser aberto via um servidor local (http://), não direto do disco (file://) — o FFmpeg (usado para gerar o MP4) não funciona em arquivos abertos diretamente. Veja a dica abaixo do botão "Aplicar ao Vídeo" para como resolver isso rapidamente.');
     }
     if (typeof FFmpegWASM === 'undefined') {
-        throw new Error('Biblioteca FFmpeg não carregou (verifique sua conexão com a internet — o Pixelar Vídeo depende de um CDN externo para codificar o MP4).');
+        const ffmpegJsUrl = await toBlobURL('https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/umd/ffmpeg.min.js', 'text/javascript');
+        await loadScriptFromBlobURL(ffmpegJsUrl);
+        if (typeof FFmpegWASM === 'undefined') {
+            throw new Error('Biblioteca FFmpeg não carregou (verifique sua conexão com a internet — o Pixelar Vídeo depende de um CDN externo para codificar o MP4).');
+        }
     }
     const { FFmpeg } = FFmpegWASM;
     ffmpeg = new FFmpeg();
