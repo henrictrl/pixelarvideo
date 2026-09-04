@@ -1551,9 +1551,13 @@ async function ensureFfmpegLoaded(onLog) {
     ffmpeg = new FFmpeg();
     if (onLog) ffmpeg.on('log', ({ message }) => onLog(message));
     const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+    // classWorkerURL aponta o worker principal (814.ffmpeg.js) para uma blob local — sem isso,
+    // o navegador bloqueia por origem cruzada ("Failed to construct 'Worker'").
+    const ffmpegWorkerBlobUrl = await toBlobURL('https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/umd/814.ffmpeg.js', 'text/javascript');
     await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        classWorkerURL: ffmpegWorkerBlobUrl,
     });
     ffmpegLoaded = true;
     return ffmpeg;
