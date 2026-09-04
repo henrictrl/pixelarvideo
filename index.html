@@ -1563,11 +1563,33 @@ document.getElementById('btnApplyToVideo').addEventListener('click', async () =>
 
     const stateSnapshot = getStateObject();
 
-    // Vídeo auxiliar oculto para varrer os frames por seek
+    // Vídeo auxiliar oculto para varrer os frames por seek.
+    // Precisa estar anexado ao DOM (alguns navegadores não carregam metadados de <video> "solto"),
+    // e precisa de timeout + tratamento de erro para nunca travar silenciosamente.
     const workVideo = document.createElement('video');
-    workVideo.src = videoObjectUrl;
-    workVideo.muted = true; workVideo.playsInline = true;
-    await new Promise((res) => { workVideo.onloadedmetadata = res; });
+    workVideo.muted = true; workVideo.playsInline = true; workVideo.preload = 'auto';
+    workVideo.style.position = 'fixed'; workVideo.style.left = '-9999px'; workVideo.style.width = '1px'; workVideo.style.height = '1px';
+    document.body.appendChild(workVideo);
+
+    try {
+        await new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => {
+                reject(new Error('O vídeo demorou demais para carregar os metadados (timeout de 20s). Tente um arquivo MP4 diferente ou verifique se o codec é suportado pelo navegador.'));
+            }, 20000);
+            workVideo.onloadedmetadata = () => { clearTimeout(timeoutId); resolve(); };
+            workVideo.onerror = () => {
+                clearTimeout(timeoutId);
+                reject(new Error('Não foi possível carregar este vídeo (formato ou codec pode não ser suportado pelo navegador).'));
+            };
+            workVideo.src = videoObjectUrl;
+            workVideo.load();
+        });
+    } catch (metaErr) {
+        workVideo.remove();
+        poStatus.textContent = 'Erro: ' + metaErr.message;
+        setTimeout(() => { processOverlay.style.display = 'none'; }, 5000);
+        return;
+    }
 
     const duration = workVideo.duration;
     let fps = 24;
@@ -1647,6 +1669,8 @@ document.getElementById('btnApplyToVideo').addEventListener('click', async () =>
         console.error(err);
         poStatus.textContent = 'Erro: ' + (err && err.message ? err.message : 'falha ao processar o vídeo. Veja o console para detalhes.');
         setTimeout(() => { processOverlay.style.display = 'none'; }, 4000);
+    } finally {
+        workVideo.remove();
     }
 });
 
@@ -1656,8 +1680,12 @@ function finishCancelled() {
 }
 
 function seekVideo(videoEl, time) {
-    return new Promise((resolve) => {
-        const onSeeked = () => { videoEl.removeEventListener('seeked', onSeeked); resolve(); };
+    return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            videoEl.removeEventListener('seeked', onSeeked);
+            reject(new Error(`Tempo esgotado ao buscar o frame em ${time.toFixed(2)}s do vídeo.`));
+        }, 10000);
+        const onSeeked = () => { clearTimeout(timeoutId); videoEl.removeEventListener('seeked', onSeeked); resolve(); };
         videoEl.addEventListener('seeked', onSeeked);
         videoEl.currentTime = time;
     });
