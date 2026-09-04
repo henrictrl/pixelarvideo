@@ -483,6 +483,9 @@
                                 <code style="user-select:all;">python3 -m http.server 8000</code><br>
                                 depois acesse <code style="user-select:all;">http://localhost:8000/</code> + o nome do arquivo no navegador.
                             </div>
+                            <div id="safariWarning" style="display:none; font-size:0.7rem; color: var(--danger); line-height:1.5; border:1px dashed var(--danger); padding:8px; margin-top:2px;">
+                                ⚠ O Safari tem um bug conhecido que impede a geração do vídeo MP4 nesta ferramenta. Use o <strong>Google Chrome</strong>, Firefox ou Edge para a etapa "Aplicar ao Vídeo" — o resto do editor funciona normalmente no Safari.
+                            </div>
                             <div id="resultBox" style="display:none; flex-direction:column; gap:6px; margin-top:4px; border-top:1px dashed var(--border-light); padding-top:8px;">
                                 <div class="panel-label" style="display:block !important;">Resultado</div>
                                 <video id="resultVideo" controls style="width:100%; border:1px solid var(--border); background:#000;"></video>
@@ -593,10 +596,8 @@
         </div>
     </div>
 
-    <!-- ffmpeg.min.js é carregado dinamicamente via blob (ver ensureFfmpegLoaded) para evitar
-         o erro "Failed to construct 'Worker': cannot be accessed from origin" causado pelo
-         worker interno (814.ffmpeg.js) tentando resolver caminho relativo ao CDN. -->
-    <script></script>
+    <!-- FFmpeg é carregado via import() dinâmico do build ESM oficial (ver ensureFfmpegLoaded),
+         não por <script src>: isso evita os problemas do build UMD com workers de origem cruzada. -->
     <script>
 // ======= LÓGICA DE TABS =======
 const allTabs = document.querySelectorAll('.d-tab');
@@ -1408,6 +1409,15 @@ if (location.protocol === 'file:') {
     if (warnEl) warnEl.style.display = 'block';
 }
 
+(function checkSafariWarning() {
+    const ua = navigator.userAgent;
+    const isSafari = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(ua);
+    if (isSafari) {
+        const warnEl = document.getElementById('safariWarning');
+        if (warnEl) warnEl.style.display = 'block';
+    }
+})();
+
 function loadVideoFile(file) {
     if (!file) return;
     if (file.type !== 'video/mp4' && !file.name.toLowerCase().endsWith('.mp4')) {
@@ -1522,42 +1532,28 @@ async function toBlobURL(url, mimeType) {
     return URL.createObjectURL(blob);
 }
 
-// Carrega um <script> dinamicamente a partir de uma blob URL (mesmo truque usado para coreURL/wasmURL),
-// assim o worker interno do ffmpeg.min.js (814.ffmpeg.js) resolve relativo ao blob, não ao CDN externo,
-// evitando o erro "Failed to construct 'Worker': cannot be accessed from origin ...".
-function loadScriptFromBlobURL(blobUrl) {
-    return new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = blobUrl;
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error('Falha ao executar o script do FFmpeg carregado via blob.'));
-        document.head.appendChild(s);
-    });
-}
-
 async function ensureFfmpegLoaded(onLog) {
     if (ffmpegLoaded) return ffmpeg;
     if (location.protocol === 'file:') {
         throw new Error('Este arquivo precisa ser aberto via um servidor local (http://), não direto do disco (file://) — o FFmpeg (usado para gerar o MP4) não funciona em arquivos abertos diretamente. Veja a dica abaixo do botão "Aplicar ao Vídeo" para como resolver isso rapidamente.');
     }
-    if (typeof FFmpegWASM === 'undefined') {
-        const ffmpegJsUrl = await toBlobURL('https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/umd/ffmpeg.min.js', 'text/javascript');
-        await loadScriptFromBlobURL(ffmpegJsUrl);
-        if (typeof FFmpegWASM === 'undefined') {
-            throw new Error('Biblioteca FFmpeg não carregou (verifique sua conexão com a internet — o Pixelar Vídeo depende de um CDN externo para codificar o MP4).');
-        }
+    const ua = navigator.userAgent;
+    const isSafari = /^((?!chrome|android|crios|fxios|edg).)*safari/i.test(ua);
+    if (isSafari) {
+        throw new Error('O Safari tem um bug conhecido (WebKitBlobResource) ao carregar os arquivos grandes que o FFmpeg precisa para gerar o MP4. Use o Google Chrome, Firefox ou Edge para a etapa de "Aplicar ao Vídeo" — o resto do editor funciona normalmente no Safari.');
     }
-    const { FFmpeg } = FFmpegWASM;
+    // Usa o build ESM oficial via import() dinâmico nativo do navegador — evita completamente
+    // os problemas do build UMD (worker interno 814.ffmpeg.js resolvido de forma incorreta,
+    // "Failed to construct Worker" por origem cruzada, "failed to import ffmpeg-core.js").
+    // Este é o padrão recomendado pela documentação oficial para páginas HTML estáticas sem bundler.
+    const ffmpegModule = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+    const { FFmpeg } = ffmpegModule;
     ffmpeg = new FFmpeg();
     if (onLog) ffmpeg.on('log', ({ message }) => onLog(message));
-    const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
-    // classWorkerURL aponta o worker principal (814.ffmpeg.js) para uma blob local — sem isso,
-    // o navegador bloqueia por origem cruzada ("Failed to construct 'Worker'").
-    const ffmpegWorkerBlobUrl = await toBlobURL('https://cdnjs.cloudflare.com/ajax/libs/ffmpeg/0.12.10/umd/814.ffmpeg.js', 'text/javascript');
+    const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
     await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-        classWorkerURL: ffmpegWorkerBlobUrl,
     });
     ffmpegLoaded = true;
     return ffmpeg;
