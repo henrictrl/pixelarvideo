@@ -1530,7 +1530,7 @@ async function ensureFfmpegLoaded(onLog) {
     const { FFmpeg } = FFmpegWASM;
     ffmpeg = new FFmpeg();
     if (onLog) ffmpeg.on('log', ({ message }) => onLog(message));
-    const baseURL = 'https://cdnjs.cloudflare.com/ajax/libs/ffmpeg-core/0.12.6/umd';
+    const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
     await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
