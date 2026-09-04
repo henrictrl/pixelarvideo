@@ -1551,9 +1551,14 @@ async function ensureFfmpegLoaded(onLog) {
     ffmpeg = new FFmpeg();
     if (onLog) ffmpeg.on('log', ({ message }) => onLog(message));
     const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+    const ffmpegBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm';
+    // classWorkerURL aponta o worker.js (criado internamente via `new Worker(new URL('worker.js', import.meta.url))`)
+    // para uma blob local — sem isso, o navegador bloqueia por origem cruzada
+    // ("Failed to construct 'Worker': Script at '.../worker.js' cannot be accessed from origin ...").
     await ffmpeg.load({
         coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
         wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        classWorkerURL: await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript'),
     });
     ffmpegLoaded = true;
     return ffmpeg;
