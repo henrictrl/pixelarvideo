@@ -1522,15 +1522,8 @@ document.getElementById('importStylePreset').addEventListener('change', (e) => {
     e.target.value = '';
 });
 
-// ======= FFMPEG.WASM (carregado sob demanda, hospedado no MESMO domínio da página) =======
-// Os 3 arquivos do FFmpeg (worker.js, ffmpeg-core.js, ffmpeg-core.wasm) precisam estar
-// numa pasta local do repositório (ex: ./ffmpeg/) para que o Worker seja criado na MESMA
-// origem da página. Usar um CDN externo (jsDelivr/unpkg) para esses 3 arquivos causa
-// SecurityError ao construir o Worker em muitos navegadores/versões, mesmo passando
-// classWorkerURL — é um problema conhecido do pacote @ffmpeg/ffmpeg quando os arquivos
-// não estão na mesma origem.
-const FFMPEG_BASE_PATH = './ffmpeg/'; // pasta dentro do seu repositório, ao lado deste HTML
-
+// ======= FFMPEG.WASM (carregado sob demanda) =======
+// Substitui o pacote @ffmpeg/util (evita depender de um segundo CDN/global instável): busca a URL e converte para blob URL local.
 async function toBlobURL(url, mimeType) {
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`Falha ao buscar ${url}: HTTP ${resp.status}`);
@@ -1549,33 +1542,30 @@ async function ensureFfmpegLoaded(onLog) {
     if (isSafari) {
         throw new Error('O Safari tem um bug conhecido (WebKitBlobResource) ao carregar os arquivos grandes que o FFmpeg precisa para gerar o MP4. Use o Google Chrome, Firefox ou Edge para a etapa de "Aplicar ao Vídeo" — o resto do editor funciona normalmente no Safari.');
     }
-
-    // Checagem antecipada: os 3 arquivos precisam existir na pasta local ./ffmpeg/.
-    // Isso evita um erro genérico de Worker mais adiante e dá uma mensagem clara
-    // caso os arquivos ainda não tenham sido enviados ao repositório.
-    try {
-        const check = await fetch(FFMPEG_BASE_PATH + 'ffmpeg-core.js', { method: 'HEAD' });
-        if (!check.ok) throw new Error('HTTP ' + check.status);
-    } catch (checkErr) {
-        throw new Error(
-            `Não encontrei os arquivos do FFmpeg em "${FFMPEG_BASE_PATH}" (ao lado deste HTML no repositório). ` +
-            `Suba os 3 arquivos worker.js, ffmpeg-core.js e ffmpeg-core.wasm dentro de uma pasta "ffmpeg" no seu ` +
-            `repositório GitHub, no mesmo nível deste arquivo HTML, e tente novamente.`
-        );
-    }
-
-    // Continua usando o build ESM oficial via import() dinâmico (evita os problemas do
-    // build UMD), mas agora todas as URLs (core, wasm, worker) apontam para arquivos
-    // LOCAIS, na mesma origem da página — o que elimina o SecurityError de Worker cruzado.
+    // Usa o build ESM oficial via import() dinâmico nativo do navegador para o wrapper (index.js) —
+    // mas worker.js, ffmpeg-core.js e ffmpeg-core.wasm são servidos do PRÓPRIO repositório (pasta /ffmpeg/),
+    // mesma origem da página. Isso elimina de vez o erro "Failed to construct Worker: cannot be
+    // accessed from origin ..." que ocorre quando esses arquivos vêm de um CDN externo (cdnjs/jsDelivr):
+    // o worker interno do FFmpeg é criado com `new Worker(new URL('worker.js', import.meta.url))`,
+    // então ele precisa estar hospedado na mesma origem de onde foi importado.
     const ffmpegModule = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
     const { FFmpeg } = ffmpegModule;
     ffmpeg = new FFmpeg();
     if (onLog) ffmpeg.on('log', ({ message }) => onLog(message));
-
+    // Caminho relativo à própria página (funciona em qualquer subpasta do GitHub Pages).
+    const localBaseURL = new URL('ffmpeg/', document.baseURI).href;
+    let coreURL, wasmURL, workerURL;
+    try {
+        coreURL = await toBlobURL(`${localBaseURL}ffmpeg-core.js`, 'text/javascript');
+        wasmURL = await toBlobURL(`${localBaseURL}ffmpeg-core.wasm`, 'application/wasm');
+        workerURL = `${localBaseURL}worker.js`;
+    } catch (fetchErr) {
+        throw new Error('Não encontrei os arquivos do FFmpeg na pasta /ffmpeg/ deste site (worker.js, ffmpeg-core.js, ffmpeg-core.wasm). Confirme que essa pasta existe ao lado do index.html no seu repositório.');
+    }
     await ffmpeg.load({
-        coreURL: await toBlobURL(FFMPEG_BASE_PATH + 'ffmpeg-core.js', 'text/javascript'),
-        wasmURL: await toBlobURL(FFMPEG_BASE_PATH + 'ffmpeg-core.wasm', 'application/wasm'),
-        classWorkerURL: FFMPEG_BASE_PATH + 'worker.js',
+        coreURL: coreURL,
+        wasmURL: wasmURL,
+        classWorkerURL: workerURL,
     });
     ffmpegLoaded = true;
     return ffmpeg;
